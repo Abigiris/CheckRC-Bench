@@ -1,5 +1,5 @@
 def func(x):
-    if type(x) == bool:     
-        if not isinstance(x, int):
+    if type(x) == int:     
+        if not isinstance(x, bool):
             return "subsumed redundancy"
     return None
