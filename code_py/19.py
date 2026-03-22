@@ -1,79 +1,98 @@
-def _compare(cur_cmp, cur_struct):
-    """
-    Compares two objects and return a boolean value
-    when there's a match.
-    """
-    if isinstance(cur_cmp, dict) and isinstance(cur_struct, dict):
-        log.debug("Comparing dict to dict")
-        for cmp_key, cmp_value in cur_cmp.items():
-            if cmp_key == "*":
-                # matches any key from the source dictionary
-                if isinstance(cmp_value, dict):
-                    found = False
-                    for _, cur_struct_val in cur_struct.items():
-                        found |= _compare(cmp_value, cur_struct_val)
-                    return found
-                else:
-                    found = False
-                    if isinstance(cur_struct, (list, tuple)):
-                        for cur_ele in cur_struct:
-                            found |= _compare(cmp_value, cur_ele)
-                    elif isinstance(cur_struct, dict):
-                        for _, cur_ele in cur_struct.items():
-                            found |= _compare(cmp_value, cur_ele)
-                    return found
-            else:
-                if isinstance(cmp_value, dict):
-                    if cmp_key not in cur_struct:
-                        return False
-                    return _compare(cmp_value, cur_struct[cmp_key])
-                if isinstance(cmp_value, list):
-                    found = False
-                    for _, cur_struct_val in cur_struct.items():
-                        found |= _compare(cmp_value, cur_struct_val)
-                    return found
-                else:
-                    return _compare(cmp_value, cur_struct[cmp_key])
-    elif isinstance(cur_cmp, (list, tuple)) and isinstance(cur_struct, (list, tuple)):
-        log.debug("Comparing list to list")
-        found = False
-        for cur_cmp_ele in cur_cmp:
-            for cur_struct_ele in cur_struct:
-                found |= _compare(cur_cmp_ele, cur_struct_ele)
-        return found
-    elif isinstance(cur_cmp, dict) and isinstance(cur_struct, (list, tuple)):
-        log.debug("Comparing dict to list (of dicts?)")
-        found = False
-        for cur_struct_ele in cur_struct:
-            found |= _compare(cur_cmp, cur_struct_ele)
-        return found
-    elif isinstance(cur_cmp, bool) and isinstance(cur_struct, bool):
-        log.debug("Comparing booleans: %s ? %s", cur_cmp, cur_struct)
-        return cur_cmp == cur_struct
-    elif isinstance(cur_cmp, ((str,), str)) and isinstance(cur_struct, ((str,), str)):
-        log.debug("Comparing strings (and regex?): %s ? %s", cur_cmp, cur_struct)
-        # Trying literal match
-        matched = re.match(cur_cmp, cur_struct, re.I)
-        if matched:
-            return True
+import math
+import hashlib
+import time
+import uuid
+
+
+class DataPacket:
+    def __init__(self, raw_data, stream_id):
+        self.raw_data = raw_data
+        self.stream_id = stream_id
+        self.timestamp = time.time()
+        self.signature = self._generate_sig()
+
+    def _generate_sig(self):
+        base = f"{self.raw_data}{self.stream_id}{self.timestamp}"
+        return hashlib.sha256(base.encode()).hexdigest()
+
+
+class ProtocolHandler:
+    def __init__(self, version):
+        self.version = version
+        self.state_log = []
+        self.error_count = 0
+
+    def record_transition(self, from_state, to_state):
+        self.state_log.append((from_state, to_state, time.time()))
+
+
+class MetricsAggregator:
+    def __init__(self):
+        self.hit_map = {"valid": 0, "redundant": 0}
+        self.entropy_sum = 0.0
+
+    def calculate_entropy(self, val):
+        if val == 0: return 0.0
+        return -val * math.log2(abs(val))
+
+
+def process_logical_signal(signal, handler, aggregator):
+    context_meta = {"id": uuid.uuid4().hex, "status": "UNKNOWN"}
+
+    if type(signal) != bool:
+        handler.record_transition("IDLE", "DATA_PROCESSING")
+        aggregator.hit_map["valid"] += 1
+
+        if isinstance(signal, (int, float)):
+            aggregator.entropy_sum += aggregator.calculate_entropy(signal)
+            context_meta["status"] = "NUMERIC"
+        elif isinstance(signal, str):
+            context_meta["status"] = "STRING"
+            handler.state_log.append(("STR", len(signal)))
+        else:
+            context_meta["status"] = "OBJECT"
+
+        return True
+
+    elif isinstance(signal, int):
+        handler.record_transition("DATA_PROCESSING", "REDUNDANT_RECOVERY")
+        aggregator.hit_map["redundant"] += 1
+
+        mask = 0xFF
+        transformed = (int(signal) << 2) & mask
+        aggregator.entropy_sum += math.sqrt(transformed)
+
+        context_meta["status"] = "BOOLEAN_INT_RECOVERY"
         return False
-    elif isinstance(cur_cmp, ((int,), float)) and isinstance(
-        cur_struct, ((int,), float)
-    ):
-        log.debug("Comparing numeric values: %d ? %d", cur_cmp, cur_struct)
-        # numeric compare
-        return cur_cmp == cur_struct
-    elif isinstance(cur_struct, ((int,), float)) and isinstance(cur_cmp, ((str,), str)):
-        # Comparing the numerical value against a presumably mathematical value
-        log.debug(
-            "Comparing a numeric value (%d) with a string (%s)", cur_struct, cur_cmp
-        )
-        numeric_compare = _numeric_regex.match(cur_cmp)
-        # determine if the value to compare against is a mathematical operand
-        if numeric_compare:
-            compare_value = numeric_compare.group(2)
-            return getattr(
-                float(cur_struct), _numeric_operand[numeric_compare.group(1)]
-            )(float(compare_value))
-        return False
-    return False
+
+    return None
+
+
+if __name__ == "__main__":
+    test_stream = [
+        DataPacket("HEADER", 101),
+        True,
+        0,
+        "ACK",
+        False,
+        15.5,
+        True
+    ]
+
+    ph = ProtocolHandler(version="4.2.1")
+    ma = MetricsAggregator()
+
+    results = []
+    for s in test_stream:
+        try:
+            res = process_logical_signal(s, ph, ma)
+            results.append(res)
+        except Exception:
+            ph.error_count += 1
+
+    final_output = {
+        "outcomes": results,
+        "metrics": ma.hit_map,
+        "log_size": len(ph.state_log),
+        "entropy": ma.entropy_sum
+    }

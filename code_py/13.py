@@ -1,86 +1,42 @@
-def profile(name, profile, onlyif=None, unless=None, opts=None, **kwargs):
-    """
-    Create a single instance on a cloud provider, using a salt-cloud profile.
+class SimulationObject:
+    def __init__(self):
+        self.mass = 1.0
+        self.velocity = [0.0, 0.0]
 
-    Note that while profiles used this function do take any configuration
-    argument that would normally be used to create an instance using a profile,
-    this state will not verify the state of any of those arguments on an
-    existing instance. Stateful properties of an instance should be configured
-    using their own individual state (i.e., cloud.tagged, cloud.untagged, etc).
 
-    name
-        The name of the instance to create
+class FluidParticle(SimulationObject):
+    def __init__(self, viscosity):
+        super().__init__()
+        self.viscosity = viscosity
+        self.pressure = 101.3
 
-    profile
-        The name of the cloud profile to use
 
-    onlyif
-        Do run the state only if is unless succeed
+class GasParticle(FluidParticle):
+    def __init__(self, temperature):
+        super().__init__(viscosity=0.018)
+        self.temperature = temperature
 
-    unless
-        Do not run the state at least unless succeed
 
-    kwargs
-        Any profile override or addition
+def compute_particle_dynamics(obj, delta_t):
+    computed_state = {"stable": True, "log": []}
 
-    opts
-        Any extra opts that need to be used
-    """
-    ret = {"name": name, "changes": {}, "result": None, "comment": ""}
-    retcode = __salt__["cmd.retcode"]
-    if onlyif is not None:
-        if not isinstance(onlyif, str):
-            if not onlyif:
-                return _valid(name, comment="onlyif condition is false")
-        elif isinstance(onlyif, str):
-            if retcode(onlyif, python_shell=True) != 0:
-                return _valid(name, comment="onlyif condition is false")
-    instance = _get_instance([name])
-    if instance and not any("Not Actioned" in key for key in instance):
-        ret["result"] = True
-        ret["comment"] = f"Already present instance {name}"
-        return ret
+    if isinstance(obj, FluidParticle):
+        if isinstance(obj, SimulationObject):
+            kinetic_energy = 0.5 * obj.mass * (obj.velocity[0] ** 2 + obj.velocity[1] ** 2)
+            obj.velocity[0] += (obj.pressure / obj.mass) * delta_t
 
-    if __opts__["test"]:
-        ret["comment"] = f"Instance {name} needs to be created"
-        return ret
+            if isinstance(obj, GasParticle):
+                heat_factor = obj.temperature * 0.082
+                obj.pressure *= heat_factor
+                computed_state["log"].append(f"Gas adjusted: {obj.pressure}")
+            else:
+                obj.pressure -= obj.viscosity * delta_t
+                computed_state["log"].append("Fluid dampened")
 
-    info = __salt__["cloud.profile"](profile, name, vm_overrides=kwargs, opts=opts)
+    return obj, computed_state
 
-    # get either {Error: ''} or {namestring: {Error: ''}}
-    # which is what we can get from providers returns
-    main_error = info.get("Error", "")
-    name_error = ""
-    if isinstance(info, dict):
-        subinfo = info.get(name, {})
-        if isinstance(subinfo, dict):
-            name_error = subinfo.get("Error", None)
-    error = main_error or name_error
-    if info and not error:
-        node_info = info.get(name)
-        ret["result"] = True
-        default_msg = "Created instance {} using profile {}".format(
-            name,
-            profile,
-        )
-        # some providers support changes
-        if "changes" in node_info:
-            ret["changes"] = node_info["changes"]
-            ret["comment"] = node_info.get("comment", default_msg)
-        else:
-            ret["changes"] = info
-            ret["comment"] = default_msg
-    elif error:
-        ret["result"] = False
-        ret["comment"] = "Failed to create instance {} using profile {}: {}".format(
-            name,
-            profile,
-            f"{main_error}\n{name_error}\n".strip(),
-        )
-    else:
-        ret["result"] = False
-        ret["comment"] = "Failed to create instance {} using profile {}".format(
-            name,
-            profile,
-        )
-    return ret
+
+if __name__ == "__main__":
+    p = GasParticle(temperature=300)
+    p.velocity = [1.2, 0.5]
+    updated_p, state = compute_particle_dynamics(p, 0.01)

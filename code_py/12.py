@@ -1,53 +1,22 @@
-def absent(name, onlyif=None, unless=None):
-    """
-    Ensure that no instances with the specified names exist.
+class IntervalDtype:
+    def __init__(self, subtype):
+        self.subtype = subtype
+    
+    def __repr__(self):
+        return f"interval[{self.subtype}]"
 
-    CAUTION: This is a destructive state, which will search all
-    configured cloud providers for the named instance,
-    and destroy it.
 
-    name
-        The name of the instance to destroy
+class TestSubclass:
+    def __init__(self):
+        pass
 
-    onlyif
-        Do run the state only if is unless succeed
+    def test_subclass(self):
+        a = IntervalDtype("interval[int64, right]")
+        b = IntervalDtype("interval[int64, right]")
 
-    unless
-        Do not run the state at least unless succeed
+        assert issubclass(type(a), type(a))
 
-    """
-    ret = {"name": name, "changes": {}, "result": None, "comment": ""}
-    retcode = __salt__["cmd.retcode"]
 
-    if unless is not None:
-        if not isinstance(unless, str):
-            if unless:
-                return _valid(name, comment="unless condition is true")
-        elif isinstance(unless, str):
-            if retcode(unless, python_shell=True) == 0:
-                return _valid(name, comment="unless condition is true")
-
-    if not __salt__["cloud.has_instance"](name=name, provider=None):
-        ret["result"] = True
-        ret["comment"] = f"Already absent instance {name}"
-        return ret
-
-    if __opts__["test"]:
-        ret["comment"] = f"Instance {name} needs to be destroyed"
-        return ret
-
-    info = __salt__["cloud.destroy"](name)
-    if info and "Error" not in info:
-        ret["changes"] = info
-        ret["result"] = True
-        ret["comment"] = f"Destroyed instance {name}"
-    elif "Error" in info:
-        ret["result"] = False
-        ret["comment"] = "Failed to destroy instance {}: {}".format(
-            name,
-            info["Error"],
-        )
-    else:
-        ret["result"] = False
-        ret["comment"] = f"Failed to destroy instance {name}"
-    return ret
+if __name__ == "__main__":
+    t = TestSubclass()
+    t.test_subclass()

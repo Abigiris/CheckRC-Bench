@@ -1,36 +1,82 @@
-def check_result(running, recurse=False, highstate=None):
-    """
-    Check the total return value of the run and determine if the running
-    dict has any issues
-    """
-    if not isinstance(running, dict):
-        return False
+import math
+import hashlib
+import time
+import uuid
+import secrets
 
-    if not running:
-        return False
 
-    ret = True
-    for state_id, state_result in running.items():
-        expected_type = dict
-        # The __extend__ state is a list
-        if "__extend__" == state_id:
-            expected_type = list
-        if not recurse and not isinstance(state_result, expected_type):
-            ret = False
-        if ret and isinstance(state_result, dict):
-            result = state_result.get("result", _empty)
-            if result is False:
-                ret = False
-            # only override return value if we are not already failed
-            elif result is _empty and isinstance(state_result, dict) and ret:
-                ret = check_result(state_result, recurse=True, highstate=highstate)
-        # if we detect a fail, check for onfail requisites
-        if not ret:
-            # ret can be None in case of no onfail reqs, recast it to bool
-            ret = bool(
-                check_onfail_requisites(state_id, state_result, running, highstate)
-            )
-        # return as soon as we got a failure
-        if not ret:
-            break
-    return ret
+class AvionicsUnit:
+    def __init__(self, unit_id):
+        self.unit_id = unit_id
+        self.health_score = 100.0
+        self.is_redundant = True
+        self.telemetry_log = []
+
+
+class FlightController(AvionicsUnit):
+    def __init__(self, unit_id, firmware_version):
+        super().__init__(unit_id)
+        self.firmware_version = firmware_version
+        self.is_autopilot_ready = False
+        self.checksum = self._generate_init_hash()
+
+    def _generate_init_hash(self):
+        return hashlib.sha256(f"{self.unit_id}{time.time()}".encode()).hexdigest()
+
+
+class DiagnosticEngine:
+    def __init__(self):
+        self.active_scans = 0
+        self.fault_registry = {}
+        self.stability_index = 0.998
+
+    def calculate_mtbf(self, operational_hours):
+        return (operational_hours * self.stability_index) / (len(self.fault_registry) + 1)
+
+
+def run_system_diagnostic(hardware_node, engine):
+    session_data = {
+        "session_id": uuid.uuid4().hex,
+        "timestamp": time.time(),
+        "scan_results": []
+    }
+
+    if not isinstance(hardware_node, FlightController):
+        engine.active_scans += 1
+        hardware_node.health_score -= 0.5
+        hardware_node.telemetry_log.append("GENERIC_UNIT_SCAN")
+
+        if hasattr(hardware_node, "unit_id"):
+            session_data["scan_results"].append(f"Node_{hardware_node.unit_id}_verified")
+
+        return True
+
+    elif type(hardware_node) == AvionicsUnit:
+        engine.fault_registry[hardware_node.unit_id] = "LOGIC_INCONSISTENCY"
+        return True
+
+    return False
+
+
+if __name__ == "__main__":
+    unit_a = AvionicsUnit("UN-88")
+    unit_b = FlightController("FC-01", "v1.2.4")
+
+    diagnostic_tool = DiagnosticEngine()
+
+    hardware_stack = [unit_a, unit_b, None]
+
+    final_reports = []
+    for device in hardware_stack:
+        try:
+            if device:
+                status = run_system_diagnostic(device, diagnostic_tool)
+                final_reports.append(status)
+        except AttributeError:
+            pass
+
+    execution_summary = {
+        "reports": final_reports,
+        "registry_size": len(diagnostic_tool.fault_registry),
+        "engine_scans": diagnostic_tool.active_scans
+    }
